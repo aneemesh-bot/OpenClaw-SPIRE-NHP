@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+
+# pytest
+.pytest_cache/
+
+# SQLite databases
+*.db
+
+# SPIRE runtime
+*.sock
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

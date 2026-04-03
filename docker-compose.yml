@@ -1,0 +1,21 @@
+services:
+  nhp-daemon:
+    build: .
+    container_name: spire-nhp-daemon
+    volumes:
+      - spire-data:/var/run/spire-nhp
+    environment:
+      - SPIRE_NHP_SOCKET=/var/run/spire-nhp/workload.sock
+      - SPIRE_NHP_DB=/var/run/spire-nhp/spire_nhp.db
+      - SPIRE_NHP_LOG_DB=/var/run/spire-nhp/spire_nhp_log.db
+    restart: unless-stopped
+
+  test:
+    build: .
+    container_name: spire-nhp-test
+    command: python -m pytest tests/ -v
+    profiles:
+      - test
+
+volumes:
+  spire-data:
