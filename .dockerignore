@@ -5,3 +5,5 @@ __pycache__/
 *.db
 *.sock
 .git/
+build/
+tropic01-req/**/build/

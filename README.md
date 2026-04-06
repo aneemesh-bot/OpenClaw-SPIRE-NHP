@@ -353,7 +353,39 @@ TROPIC01_FORCE_REGEN=true python -m nhp_daemon   # dev/test only
 
 ---
 
+**Fix: Docker image build fails with CMakeCache path mismatch**
+
+- **Root cause.** `.dockerignore` did not exclude `tropic01-req/**/build/`. The host-side CMakeCache (recording the host filesystem path) was copied into the image, causing CMake to reject the mismatched source directory and abort the build.
+- **Fix.** Added `build/` and `tropic01-req/**/build/` to `.dockerignore` so the host CMake artefacts are never included in the build context.
+- **Files changed.** `.dockerignore`
+
+---
+
+**Fix: `sqlite3` CLI not found when querying audit logs inside container (`exec: "sqlite3": executable file not found in $PATH`)**
+
+- **Root cause.** `python:3.14-slim` does not ship the `sqlite3` command-line tool, so `docker exec … sqlite3 …` failed at runtime.
+- **Fix.** Added `sqlite3` to the `apt-get install` layer in the Dockerfile.
+- **Files changed.** `Dockerfile`
+
+---
+
 ## License
 
-This is a research prototype. See the repository for license details.
+This project is licensed under the [MIT License](LICENSE) — Copyright (c) 2026 aneemesh.
+
+### Third-party licenses
+
+**libtropic** (`tropic01-req/libtropic/`) is distributed under the **BSD-3-Clause-Clear (The Clear BSD License)**:
+
+> Copyright (c) 2020-2026 Tropic Square s.r.o. All rights reserved.
+>
+> Redistribution and use in source and binary forms, with or without modification, are permitted (subject to the limitations in the disclaimer below) provided that the following conditions are met:
+>
+> * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+> * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+> * Neither the name of Tropic Square nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
+>
+> NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE GRANTED BY THIS LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+The full upstream license text is at [`tropic01-req/libtropic/LICENSE.md`](tropic01-req/libtropic/LICENSE.md).
 

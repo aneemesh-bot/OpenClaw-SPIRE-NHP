@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     git \
     libusb-1.0-0-dev \
+    sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
