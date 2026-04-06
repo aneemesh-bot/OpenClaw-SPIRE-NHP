@@ -31,8 +31,7 @@ Thumbs.db
 # TROPIC01 C bridge build output
 tropic01-req/libtropic_bridge/build/
 
-# libtropic vendored C library (git submodule)
-tropic01-req/libtropic/
+# libtropic is tracked as a git submodule — see .gitmodules
 
 # Runtime data directories
 /tmp/spire-nhp/
