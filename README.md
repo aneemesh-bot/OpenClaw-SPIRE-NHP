@@ -4,6 +4,8 @@ A prototype SPIFFE/SPIRE daemon that provisions **Non-Human Persona (NHP)** iden
 
 Traditional IAM treats machine identities as static service accounts with long-lived secrets. NHP identities are different: they are short-lived, hardware-bound, cryptographically verifiable, and scoped to a specific mission. This daemon implements the identity infrastructure layer that makes that possible.
 
+Included support for hardware-mode encryption and its benefits, using the ubiquitous TROPIC01 cryptographical accelerator from Tropic Square. 
+
 ## How It Works
 
 The daemon runs a single-server SPIRE deployment on a Linux host. It manages a Root CA, issues short-lived X.509-SVIDs (SPIFFE Verifiable Identity Documents), and exposes a Unix Domain Socket for workload attestation.
