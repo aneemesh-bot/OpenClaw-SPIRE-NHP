@@ -67,6 +67,10 @@ tr.row-denied  td { background: rgba(239,68,68,.07); }
 tr.log-row-warning  td { background: rgba(245,158,11,.05); }
 tr.log-row-error    td,
 tr.log-row-critical td { background: rgba(239,68,68,.06); }
+.badge-live { background: #14532d; color: #4ade80; animation: live-pulse 2s ease-in-out infinite; }
+@keyframes live-pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+tr.log-row-new td { animation: row-flash .9s ease forwards; }
+@keyframes row-flash { from { background: rgba(79,142,247,.22); } to { background: transparent; } }
 
 /* ── TTL bar ── */
 .ttl-bar   { position: relative; background: var(--surface2); border-radius: 4px; height: 20px; min-width: 100px; overflow: hidden; }

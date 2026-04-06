@@ -21,7 +21,7 @@
   <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
   <button class="tab-btn" data-tab="svids">SVIDs</button>
   <button class="tab-btn" data-tab="entries">Entries</button>
-  <button class="tab-btn" data-tab="logs">Audit Log</button>
+  <button class="tab-btn" data-tab="logs">Audit Log <span id="ws-live-badge" class="badge badge-live" hidden>LIVE</span></button>
   <button class="tab-btn" data-tab="bundle">Trust Bundle</button>
   <button class="tab-btn" data-tab="attestor">Attestor</button>
 </nav>
@@ -305,6 +305,7 @@ let _intervals = {};
 function switchTab(name) {
   Object.values(_intervals).forEach(clearInterval);
   _intervals = {};
+  closeLogsWs();
 
   document.querySelectorAll('.tab-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === name);
@@ -317,7 +318,7 @@ function switchTab(name) {
     case 'dashboard': loadDashboard(); _intervals.d = setInterval(loadDashboard, 15_000); break;
     case 'svids':     loadSvids();     _intervals.s = setInterval(loadSvids, 10_000);     break;
     case 'entries':   loadEntries();   break;
-    case 'logs':      loadLogs();      break;
+    case 'logs':      loadLogs(); openLogsWs(); break;
     case 'bundle':    loadBundle();    break;
     case 'attestor':  loadAttestor();  break;
   }
@@ -560,6 +561,53 @@ async function loadLogs() {
 }
 
 $('log-filter-form').addEventListener('submit', e => { e.preventDefault(); loadLogs(); });
+
+// ── Audit Log – live WebSocket stream ─────────────────────────────────────
+
+let _logsWs = null;
+
+function closeLogsWs() {
+  if (_logsWs && _logsWs.readyState < 2) _logsWs.close();
+  _logsWs = null;
+  $('ws-live-badge').hidden = true;
+}
+
+function openLogsWs() {
+  closeLogsWs();
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url   = proto + '//' + location.host + '/ws/logs';
+  try { _logsWs = new WebSocket(url); } catch (_) { return; }
+  _logsWs.addEventListener('open',  () => { $('ws-live-badge').hidden = false; });
+  _logsWs.addEventListener('close', () => { $('ws-live-badge').hidden = true; _logsWs = null; });
+  _logsWs.addEventListener('error', () => { $('ws-live-badge').hidden = true; });
+  _logsWs.addEventListener('message', function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.logs && data.logs.length) prependLogRows(data.logs);
+    } catch (_) {}
+  });
+}
+
+function prependLogRows(rows) {
+  const tb = $('logs-tbody');
+  const empty = tb.querySelector('.empty');
+  if (empty) empty.closest('tr').remove();
+  const frags = rows.map(function(l) {
+    const level = (l.level || 'info').toLowerCase();
+    const meta = l.metadata
+      ? '<details><summary>metadata</summary><pre>' + esc(JSON.stringify(l.metadata, null, 2)) + '</pre></details>'
+      : '';
+    return '<tr class="log-row-' + level + ' log-row-new">'
+      + '<td class="mono small col-nowrap">' + fmtTime(l.timestamp) + '</td>'
+      + '<td><span class="badge badge-' + level + '">' + esc(l.level) + '</span></td>'
+      + '<td>' + esc(l.component) + '</td>'
+      + '<td class="small">' + esc(l.event_type || '—') + '</td>'
+      + '<td class="mono small">' + esc(truncate(l.spiffe_id || '—', 48)) + '</td>'
+      + '<td>' + esc(l.message) + meta + '</td>'
+      + '</tr>';
+  });
+  tb.insertAdjacentHTML('afterbegin', frags.join(''));
+}
 
 // ── Trust Bundle ─────────────────────────────────────────────────────────
 

@@ -19,10 +19,14 @@ Architecture
                         &spiffe_id= &since= &limit= &offset=)
   GET  /api/bundle    – trust bundle / root CA info
   GET  /api/attestor  – endorsement key hash + PCR measurements
+  WS   /ws/logs       – WebSocket stream; pushes new log rows as JSON every 500 ms
 """
 
+import base64
+import hashlib
 import json
 import os
+import struct
 import time
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -33,6 +37,61 @@ from .sqlite_logger import LogLevel
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 _MAX_BODY = 65_536  # bytes; reject oversized POST/DELETE bodies
+_WS_MAGIC = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+
+# ── WebSocket helpers ─────────────────────────────────────────────────────
+
+def _ws_accept_key(client_key: str) -> str:
+    combined = (client_key.strip() + _WS_MAGIC).encode()
+    return base64.b64encode(hashlib.sha1(combined).digest()).decode()
+
+
+def _ws_send_text(sock, text: str) -> bool:
+    """Encode *text* as a WebSocket text frame and write it to *sock*.
+    Returns False if the send fails (dead connection)."""
+    payload = text.encode("utf-8")
+    n = len(payload)
+    if n < 126:
+        header = bytes([0x81, n])
+    elif n < 65536:
+        header = struct.pack("!BBH", 0x81, 126, n)
+    else:
+        header = struct.pack("!BBQ", 0x81, 127, n)
+    try:
+        sock.sendall(header + payload)
+        return True
+    except OSError:
+        return False
+
+
+def _ws_recv_frame_opcode(rfile) -> int | None:
+    """Read one WebSocket frame, drain its payload, and return the opcode.
+    Returns None on EOF or any I/O error (connection closed)."""
+    try:
+        header = rfile.read(2)
+        if len(header) < 2:
+            return None
+        opcode = header[0] & 0x0F
+        masked_len_byte = header[1]
+        masked = bool(masked_len_byte & 0x80)
+        payload_len = masked_len_byte & 0x7F
+        if payload_len == 126:
+            ext = rfile.read(2)
+            if len(ext) < 2:
+                return None
+            payload_len = struct.unpack("!H", ext)[0]
+        elif payload_len == 127:
+            ext = rfile.read(8)
+            if len(ext) < 8:
+                return None
+            payload_len = struct.unpack("!Q", ext)[0]
+        to_drain = (4 if masked else 0) + payload_len
+        if to_drain:
+            rfile.read(to_drain)
+        return opcode
+    except OSError:
+        return None
 
 
 # ── Helper ────────────────────────────────────────────────────────────────
@@ -85,6 +144,9 @@ def _make_handler(ui: "AdminWebUI"):
                     self._handle_post(path[5:])
                 elif self.command == "DELETE" and path.startswith("/api/"):
                     self._handle_delete(path[5:])
+                elif (path == "/ws/logs" and self.command == "GET"
+                      and self.headers.get("Upgrade", "").lower() == "websocket"):
+                    self._handle_ws_upgrade()
                 else:
                     self._err(404, "not found")
             except Exception as exc:
@@ -132,6 +194,35 @@ def _make_handler(ui: "AdminWebUI"):
                 self._json({"ok": ok})
             else:
                 self._err(404, "not found")
+
+        def _handle_ws_upgrade(self):
+            ws_key = self.headers.get("Sec-WebSocket-Key", "").strip()
+            if not ws_key:
+                self._err(400, "missing Sec-WebSocket-Key")
+                return
+            accept = _ws_accept_key(ws_key)
+            self.send_response(101, "Switching Protocols")
+            self.send_header("Upgrade", "websocket")
+            self.send_header("Connection", "Upgrade")
+            self.send_header("Sec-WebSocket-Accept", accept)
+            self.end_headers()
+            self.wfile.flush()
+            sock = self.connection
+            with ui._ws_lock:
+                ui._ws_clients.append(sock)
+            try:
+                while True:
+                    opcode = _ws_recv_frame_opcode(self.rfile)
+                    if opcode is None or opcode == 8:  # 8 = connection close
+                        break
+            except Exception:
+                pass
+            finally:
+                with ui._ws_lock:
+                    try:
+                        ui._ws_clients.remove(sock)
+                    except ValueError:
+                        pass
 
         # ── response helpers ──
 
@@ -205,6 +296,10 @@ class AdminWebUI:
         self._start_time = time.time()
         self._http_server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
+        # WebSocket log-stream state
+        self._ws_clients: list = []
+        self._ws_lock = threading.Lock()
+        self._ws_last_ts: float = time.time()
 
     def start(self, host: str | None = None, port: int | None = None) -> str:
         host = host or config.WEB_UI_HOST
@@ -216,12 +311,40 @@ class AdminWebUI:
             name="nhp-admin-web",
         )
         self._thread.start()
+        threading.Thread(
+            target=self._ws_broadcaster_loop,
+            daemon=True,
+            name="nhp-ws-broadcast",
+        ).start()
         return f"http://{host}:{port}/"
 
     def stop(self):
         if self._http_server:
             self._http_server.shutdown()
-
+    def _ws_broadcaster_loop(self):
+        """Poll the logger every 500 ms and push new rows to all WebSocket clients."""
+        while True:
+            time.sleep(0.5)
+            try:
+                rows = self._logger.query_logs(since=self._ws_last_ts, limit=50)
+            except Exception:
+                continue
+            if not rows:
+                continue
+            self._ws_last_ts = max(r["timestamp"] for r in rows) + 0.001
+            payload = json.dumps({"logs": rows}, default=str)
+            with self._ws_lock:
+                if not self._ws_clients:
+                    continue
+                dead = []
+                for sock in list(self._ws_clients):
+                    if not _ws_send_text(sock, payload):
+                        dead.append(sock)
+                for s in dead:
+                    try:
+                        self._ws_clients.remove(s)
+                    except ValueError:
+                        pass
     # ── API data providers ────────────────────────────────────────────────
 
     def _api_status(self) -> dict:
