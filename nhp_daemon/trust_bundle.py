@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric.ec import ECDSA, EllipticCurvePublicKey
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
 
@@ -38,16 +39,25 @@ class TrustBundle:
     def verify_svid(self, svid_cert: x509.Certificate) -> bool:
         """Check that *svid_cert* was signed by the Root CA in this bundle."""
         try:
-            pub = self.root_certificate.public_key()
+            pub  = self.root_certificate.public_key()
             algo = svid_cert.signature_hash_algorithm
-            if not isinstance(pub, RSAPublicKey) or algo is None:
+            if algo is None:
                 return False
-            pub.verify(
-                svid_cert.signature,
-                svid_cert.tbs_certificate_bytes,
-                padding.PKCS1v15(),
-                algo,
-            )
+            if isinstance(pub, RSAPublicKey):
+                pub.verify(
+                    svid_cert.signature,
+                    svid_cert.tbs_certificate_bytes,
+                    padding.PKCS1v15(),
+                    algo,
+                )
+            elif isinstance(pub, EllipticCurvePublicKey):
+                pub.verify(
+                    svid_cert.signature,
+                    svid_cert.tbs_certificate_bytes,
+                    ECDSA(algo),
+                )
+            else:
+                return False
             return True
         except Exception:
             return False

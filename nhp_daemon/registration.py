@@ -13,6 +13,20 @@ import uuid
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from . import tropic01_hw
+
+
+def _make_uuid() -> str:
+    """Generate a UUID-4 string, preferring the hardware TRNG when available."""
+    hw = tropic01_hw.get_hw()
+    if hw is not None:
+        raw = bytearray(hw.get_random(16))
+        # Set version 4 and RFC 4122 variant bits
+        raw[6] = (raw[6] & 0x0F) | 0x40
+        raw[8] = (raw[8] & 0x3F) | 0x80
+        return str(uuid.UUID(bytes=bytes(raw)))
+    return str(uuid.uuid4())
+
 
 @dataclass
 class Selector:
@@ -69,7 +83,7 @@ class RegistrationStore:
 
     def create_entry(self, entry: RegistrationEntry) -> str:
         if not entry.entry_id:
-            entry.entry_id = str(uuid.uuid4())
+            entry.entry_id = _make_uuid()
         conn = self._get_conn()
         selectors_json = json.dumps(
             [{"type": s.type, "value": s.value} for s in entry.selectors]

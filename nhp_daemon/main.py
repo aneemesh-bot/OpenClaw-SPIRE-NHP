@@ -14,6 +14,7 @@ from .spire_agent import SPIREAgent
 from .spire_server import SPIREServer
 from .sqlite_logger import SQLiteLogger
 from .tpm_simulator import TPMSimulator
+from .tropic01_hw import deinit_hw, init_hw
 from .workload_api import WorkloadAPIClient
 
 
@@ -21,16 +22,31 @@ def main():
     logger = SQLiteLogger(LOG_DB_PATH)
     logger.info("main", "=== SPIRE NHP Daemon Starting ===", event_type="startup")
 
-    # Simulated TPM
-    tpm = TPMSimulator()
+    # Hardware initialisation (no-op when USE_TROPIC01_HW is not set)
+    hw = None
+    try:
+        hw = init_hw()
+        if hw is not None:
+            logger.info("main", "TROPIC01 hardware initialised", event_type="hw_init")
+            print("[NHP] Hardware mode: TROPIC01 ECDSA P-256")
+        else:
+            print("[NHP] Software mode: RSA-2048 / software RNG")
+    except Exception as hw_err:
+        logger.error("main", f"TROPIC01 init failed, falling back to software: {hw_err}",
+                     event_type="hw_init_fail")
+        print(f"[NHP] TROPIC01 unavailable ({hw_err}); falling back to software mode")
+        hw = None
+
+    # Attestor (uses hardware TRNG when hw is set)
+    tpm = TPMSimulator(hw=hw)
     logger.info(
         "main",
-        f"TPM simulator ready (EK: {tpm.endorsement_key_hash[:16]}...)",
+        f"Attestor ready (EK: {tpm.endorsement_key_hash[:16]}...)",
         event_type="tpm_init",
     )
 
-    # SPIRE Server
-    server = SPIREServer(TRUST_DOMAIN, DB_PATH, logger)
+    # SPIRE Server (passes hw so CA uses hardware key when available)
+    server = SPIREServer(TRUST_DOMAIN, DB_PATH, logger, hw=hw)
 
     # Register NHP personas
     uid = os.getuid()
@@ -95,6 +111,7 @@ def main():
     def _shutdown(sig, frame):
         print("\n[NHP] Shutting down...")
         agent.stop()
+        deinit_hw()
         logger.info(
             "main", "=== SPIRE NHP Daemon Stopped ===", event_type="shutdown"
         )

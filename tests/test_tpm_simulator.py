@@ -1,6 +1,6 @@
-"""Tests for the simulated TPM."""
+"""Tests for the attestation provider (Tropic01Attestor / TPMSimulator)."""
 
-from nhp_daemon.tpm_simulator import TPMSimulator
+from nhp_daemon.tpm_simulator import TPMSimulator, Tropic01Attestor
 
 
 class TestTPMSimulator:
@@ -25,15 +25,32 @@ class TestTPMSimulator:
 
     def test_generate_key_pair(self, tpm):
         priv, pub = tpm.generate_key_pair()
+        # P-256 PKCS8 PEM still carries these markers
         assert b"PRIVATE KEY" in priv
         assert b"PUBLIC KEY" in pub
 
-    def test_quote(self, tpm, tmp_path):
+    def test_generate_key_pair_is_ec(self, tpm):
+        from cryptography.hazmat.primitives.asymmetric.ec import (
+            SECP256R1,
+            EllipticCurvePrivateKey,
+        )
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+        priv, _ = tpm.generate_key_pair()
+        key = load_pem_private_key(priv, password=None)
+        assert isinstance(key, EllipticCurvePrivateKey)
+        assert isinstance(key.curve, SECP256R1)
+
+    def test_quote_software_simulated(self, tpm, tmp_path):
         binary = tmp_path / "bin"
         binary.write_bytes(b"data")
         tpm.measure_binary(str(binary))
 
         quote = tpm.quote([0], nonce=b"nonce123")
-        assert quote["simulated"] is True
+        assert quote["simulated"] is True  # hw=None → software mode
         assert 0 in quote["pcr_values"]
         assert quote["pcr_values"][0] is not None
+
+    def test_tpm_simulator_is_alias_for_attestor(self):
+        assert TPMSimulator is Tropic01Attestor
+

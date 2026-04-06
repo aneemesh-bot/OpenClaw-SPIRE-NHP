@@ -26,7 +26,7 @@ SPIRE Agent
     |  - Delivers SVID + Trust Bundle in-memory
     v
 SPIRE Server
-    |  - Root CA (self-signed, RSA 2048)
+    |  - Root CA (P-256 ECDSA via TROPIC01 hardware, or RSA-2048 in software)
     |  - Registration Store (SQLite)
     |  - SVID minting with configurable TTL
     |  - Emergency revocation
@@ -42,9 +42,10 @@ SQLite Logger
 nhp_daemon/
   __init__.py          Package marker
   __main__.py          python -m nhp_daemon entry point
-  config.py            Trust domain, socket path, TTL defaults
-  ca.py                Root CA and X.509-SVID signing
-  tpm_simulator.py     Software TPM (key generation, PCR measurement, quotes)
+  config.py            Trust domain, socket path, TROPIC01 settings, TTL defaults
+  ca.py                Root CA and X.509-SVID signing (RSA or P-256 ECDSA via hardware)
+  tropic01_hw.py       ctypes wrapper for the TROPIC01 bridge library (TRNG, ECC, sign)
+  tpm_simulator.py     Tropic01Attestor: key generation, PCR measurement, quotes
   trust_bundle.py      Trust Bundle creation, serialization, SVID verification
   registration.py      SQLite-backed registration entry CRUD and selector matching
   attestation.py       SO_PEERCRED workload attestation
@@ -54,22 +55,30 @@ nhp_daemon/
   sqlite_logger.py     Structured SQLite logger
   main.py              Daemon startup and demo flow
 
+tropic01-req/
+  libtropic/           TropicSquare libtropic C library (git submodule)
+  libtropic_bridge/    C bridge shared library (tropic01_bridge.so)
+    tropic01_bridge.h  Public API: init, random, keygen, read, sign, erase
+    tropic01_bridge.c  Implementation (singleton + pthread mutex)
+    CMakeLists.txt     Builds libtropic01_bridge.so
+
 tests/
   conftest.py          Shared pytest fixtures
-  test_ca.py           CA and SVID signing tests
-  test_tpm_simulator.py TPM simulator tests
-  test_trust_bundle.py Trust Bundle tests
-  test_registration.py Registration store tests
-  test_attestation.py  Attestation helper tests
-  test_spire_server.py Server-level tests
+  test_ca.py           CA, SVID signing, and Tropic01ECPrivateKey proxy tests
+  test_tpm_simulator.py Tropic01Attestor tests (ECC key pairs, PCR, quotes)
+  test_trust_bundle.py  Trust Bundle tests (RSA and ECDSA verification)
+  test_registration.py  Registration store CRUD and selector matching
+  test_attestation.py   Attestation helper tests
+  test_spire_server.py  Server-level tests
   test_sqlite_logger.py Logger tests
-  test_integration.py  Full Agent + Workload API flow over UDS
+  test_integration.py   Full Agent + Workload API flow over UDS
 ```
 
 ## Requirements
 
 - Python 3.12+
 - Linux (SO_PEERCRED requires a Linux kernel)
+- For hardware mode only: TROPIC01 USB engineering sample, `cmake`, `build-essential`
 
 ## Setup
 
@@ -81,19 +90,16 @@ pip install -r requirements.txt
 
 ## Running the Daemon
 
+### Software mode (no hardware required)
+
 ```bash
 python -m nhp_daemon
 ```
 
-This starts the SPIRE Server and Agent, registers two demo NHP personas (`finance-auditor` and `research-agent`), then runs a demo flow that:
-
-1. Fetches the Trust Bundle from the Agent over the Unix socket
-2. Requests an X.509-SVID for the `finance-auditor` persona
-3. Validates the SVID certificate against the Trust Bundle
-
-Output looks like:
+Output:
 
 ```
+[NHP] Software mode: RSA-2048 / software RNG
 [NHP] Trust Domain : enterprise.com
 [NHP] SPIFFE ID    : spiffe://enterprise.com/nhp/openclaw/finance-auditor
 [NHP] SVID TTL     : 300s
@@ -102,13 +108,59 @@ Output looks like:
 [NHP] Daemon running. Press Ctrl+C to stop.
 ```
 
-Press `Ctrl+C` to shut down.
+Press `Ctrl+C` to stop.
+
+### Hardware mode (TROPIC01 USB devkit)
+
+Install the udev rule so the device is accessible without `sudo`:
+
+```bash
+sudo tee /etc/udev/rules.d/99-tropic01.rules <<'EOF'
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", ATTRS{manufacturer}=="TropicSquare", MODE="0666"
+EOF
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+Build the C bridge library (one-time, requires `cmake` and `build-essential`):
+
+```bash
+cmake -S tropic01-req/libtropic_bridge \
+      -B tropic01-req/libtropic_bridge/build \
+      -DCMAKE_BUILD_TYPE=Release
+cmake --build tropic01-req/libtropic_bridge/build --parallel
+```
+
+Run with hardware offload enabled:
+
+```bash
+USE_TROPIC01_HW=true python -m nhp_daemon
+```
+
+Output:
+
+```
+[NHP] Hardware mode: TROPIC01 ECDSA P-256
+[NHP] Trust Domain : enterprise.com
+[NHP] SPIFFE ID    : spiffe://enterprise.com/nhp/openclaw/finance-auditor
+...
+```
+
+If the device is absent the daemon logs the error and **automatically falls back to software mode** — it does not crash.
+
+Environment variables for hardware mode:
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `USE_TROPIC01_HW` | `false` | Set `true` to enable TROPIC01 hardware |
+| `TROPIC01_DEVICE` | `/dev/serial/by-id/usb-TropicSquare_SPI_interface_4986323F384B-if00` | Device path |
+| `TROPIC01_PAIRING_KEYS` | `eng_sample` | Key set: `eng_sample` or `prod0` |
+| `TROPIC01_BRIDGE_SO` | `tropic01-req/libtropic_bridge/build/libtropic01_bridge.so` | Path to built .so |
 
 ## Running Tests
 
 ### Automated Test Suite
 
-Run all 49 tests:
+Run all 55 tests:
 
 ```bash
 python -m pytest tests/ -v
@@ -118,12 +170,12 @@ The test suite covers every module. Key test files and what they verify:
 
 | Test file | What it covers |
 | :--- | :--- |
-| `test_integration.py` | Full end-to-end flow: Agent over a real Unix socket, SVID fetch, validation, foreign cert rejection |
+| `test_integration.py` | Full end-to-end: Agent over a real Unix socket, SVID fetch, validation, foreign cert rejection |
 | `test_spire_server.py` | Registration, minting, revocation, multi-entry selector matching |
-| `test_ca.py` | Root CA generation, SVID signing, TTL enforcement, foreign-CA rejection |
-| `test_trust_bundle.py` | Bundle creation, serialization roundtrip, SVID verification |
+| `test_ca.py` | Root CA generation, SVID signing, TTL enforcement, `Tropic01ECPrivateKey` proxy |
+| `test_trust_bundle.py` | Bundle creation, serialization roundtrip, ECDSA and RSA SVID verification |
 | `test_registration.py` | CRUD, exact/superset/partial selector matching |
-| `test_tpm_simulator.py` | Endorsement key uniqueness, PCR measurement, TPM quotes |
+| `test_tpm_simulator.py` | EK uniqueness, PCR measurement, TPM quotes, P-256 key pair type |
 | `test_attestation.py` | Selector building from peer credentials, binary hashing |
 | `test_sqlite_logger.py` | Log levels, metadata JSON, SPIFFE ID filtering, time-range queries |
 
@@ -177,21 +229,27 @@ sqlite3 /tmp/spire-nhp/spire_nhp_log.db \
 
 ## Docker
 
-### Build and Run
+### Build and Run (software mode)
 
 ```bash
 docker compose up --build
 ```
 
-This builds the image from the included `Dockerfile` (Python 3.14-slim) and starts the daemon. SQLite databases are persisted in a named volume (`spire-data`).
+### Build and Run (hardware mode)
+
+Plug in the TROPIC01 USB devkit, then:
+
+```bash
+USE_TROPIC01_HW=true docker compose up --build
+```
+
+The `docker-compose.yml` passes `/dev/ttyACM0` into the container automatically.
 
 ### Run Tests in Docker
 
 ```bash
 docker compose run --rm test
 ```
-
-The `test` service is under a profile and only runs when explicitly invoked.
 
 ### Inspect Logs in a Running Container
 
@@ -222,6 +280,10 @@ All settings can be overridden via environment variables:
 | `SPIRE_NHP_SOCKET` | `/tmp/spire-nhp/workload.sock` | Agent Unix Domain Socket path |
 | `SPIRE_NHP_DB` | `/tmp/spire-nhp/spire_nhp.db` | Registration entry database |
 | `SPIRE_NHP_LOG_DB` | `/tmp/spire-nhp/spire_nhp_log.db` | Structured log database |
+| `USE_TROPIC01_HW` | `false` | Enable TROPIC01 hardware offload |
+| `TROPIC01_DEVICE` | (by-id symlink) | TROPIC01 device path |
+| `TROPIC01_PAIRING_KEYS` | `eng_sample` | Key set for pairing |
+| `TROPIC01_BRIDGE_SO` | (auto) | Path to `libtropic01_bridge.so` |
 
 SVID TTL defaults to 300 seconds (5 minutes). The maximum is 900 seconds (15 minutes).
 
@@ -229,21 +291,20 @@ SVID TTL defaults to 300 seconds (5 minutes). The maximum is 900 seconds (15 min
 
 - **Identity as State, not Secret.** Workloads are attested by kernel-verified process attributes (UID, binary hash), not passwords or API keys.
 - **No secrets on disk.** SVIDs and the Trust Bundle are delivered in-memory over the Unix socket.
+- **Hardware-backed Root CA.** When `USE_TROPIC01_HW=true`, the Root CA P-256 private key is generated on-chip and never exported. All signing goes through the TROPIC01 USB engineering sample via a ctypes bridge.
+- **Graceful hardware fallback.** If the TROPIC01 device is unavailable, the daemon falls back to RSA-2048 / software RNG without crashing.
 - **All logging to SQLite.** Every event (SVID minted, attestation failed, entry revoked) is stored as a structured row with component, level, SPIFFE ID, event type, and JSON metadata. No text log files exist.
 - **Selector-based matching.** A registration entry's selectors must be a subset of the workload's attested attributes. Presenting extra attributes is fine; missing a required one causes rejection.
-- **Emergency revocation.** Deleting a registration entry immediately invalidates the cached SVID. The workload loses network access at the next rotation check.
-- **Simulated TPM.** The TPM module uses software-generated keys and SHA-256 hashing to stand in for hardware TPM operations. Replace with real TPM bindings for production use.
+- **Emergency revocation.** Deleting a registration entry immediately invalidates the cached SVID.
 
 ## Querying Logs
-
-Since all logs are in SQLite, you can query them directly:
 
 ```bash
 sqlite3 /tmp/spire-nhp/spire_nhp_log.db \
   "SELECT datetime(timestamp, 'unixepoch'), level, component, message FROM logs ORDER BY timestamp DESC LIMIT 20"
 ```
 
-Or filter by event type:
+Filter by event type:
 
 ```bash
 sqlite3 /tmp/spire-nhp/spire_nhp_log.db \
@@ -253,3 +314,4 @@ sqlite3 /tmp/spire-nhp/spire_nhp_log.db \
 ## License
 
 This is a research prototype. See the repository for license details.
+

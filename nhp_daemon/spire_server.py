@@ -18,18 +18,19 @@ from .trust_bundle import TrustBundle
 class SPIREServer:
     """Single-server SPIRE deployment for NHP identity provisioning."""
 
-    def __init__(self, trust_domain: str, db_path: str, logger: SQLiteLogger):
+    def __init__(self, trust_domain: str, db_path: str, logger: SQLiteLogger, hw=None):
         self.trust_domain = trust_domain
         self.logger = logger
-        self.ca = CertificateAuthority(trust_domain)
+        self.ca = CertificateAuthority(trust_domain, hw=hw)
         self.registration_store = RegistrationStore(db_path)
         self.trust_bundle = self._create_trust_bundle()
         self._issued_svids: dict[str, tuple] = {}  # spiffe_id → (cert, expiry)
         self._lock = threading.Lock()
 
+        mode = "hardware (TROPIC01)" if hw is not None else "software"
         logger.info(
             "spire-server",
-            f"Server initialised for domain: {trust_domain}",
+            f"Server initialised for domain: {trust_domain} [{mode}]",
             event_type="server_init",
         )
 

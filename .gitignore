@@ -11,6 +11,8 @@ build/
 
 # pytest
 .pytest_cache/
+.coverage
+htmlcov/
 
 # SQLite databases
 *.db
@@ -25,3 +27,12 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# TROPIC01 C bridge build output
+tropic01-req/libtropic_bridge/build/
+
+# libtropic vendored C library (git submodule)
+tropic01-req/libtropic/
+
+# Runtime data directories
+/tmp/spire-nhp/

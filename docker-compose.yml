@@ -8,6 +8,15 @@ services:
       - SPIRE_NHP_SOCKET=/var/run/spire-nhp/workload.sock
       - SPIRE_NHP_DB=/var/run/spire-nhp/spire_nhp.db
       - SPIRE_NHP_LOG_DB=/var/run/spire-nhp/spire_nhp_log.db
+      # Set USE_TROPIC01_HW=true to activate hardware mode.
+      # Requires the TROPIC01 USB devkit to be plugged in.
+      - USE_TROPIC01_HW=${USE_TROPIC01_HW:-false}
+      - TROPIC01_DEVICE=/dev/ttyACM0
+      - TROPIC01_PAIRING_KEYS=eng_sample
+    devices:
+      # Pass the TROPIC01 USB devkit (CDC-ACM) into the container.
+      # The host udev rule must grant rw access (MODE="0666").
+      - /dev/ttyACM0:/dev/ttyACM0
     restart: unless-stopped
 
   test:
