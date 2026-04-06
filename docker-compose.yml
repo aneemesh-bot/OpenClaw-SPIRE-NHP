@@ -13,6 +13,10 @@ services:
       - USE_TROPIC01_HW=${USE_TROPIC01_HW:-false}
       - TROPIC01_DEVICE=/dev/ttyACM0
       - TROPIC01_PAIRING_KEYS=eng_sample
+      - SPIRE_NHP_WEB_HOST=0.0.0.0
+      - SPIRE_NHP_WEB_PORT=8080
+    ports:
+      - "8080:8080"
     devices:
       # Pass the TROPIC01 USB devkit (CDC-ACM) into the container.
       # The host udev rule must grant rw access (MODE="0666").

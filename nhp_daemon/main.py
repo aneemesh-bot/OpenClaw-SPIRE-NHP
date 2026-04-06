@@ -9,12 +9,13 @@ import signal
 import sys
 import time
 
-from .config import DB_PATH, DEFAULT_SVID_TTL, LOG_DB_PATH, SOCKET_PATH, TRUST_DOMAIN
+from .config import DB_PATH, DEFAULT_SVID_TTL, LOG_DB_PATH, SOCKET_PATH, TRUST_DOMAIN, WEB_UI_ENABLED
 from .spire_agent import SPIREAgent
 from .spire_server import SPIREServer
 from .sqlite_logger import SQLiteLogger
 from .tpm_simulator import TPMSimulator
 from .tropic01_hw import deinit_hw, init_hw
+from .web_ui import AdminWebUI
 from .workload_api import WorkloadAPIClient
 
 
@@ -66,6 +67,15 @@ def main():
     # SPIRE Agent
     agent = SPIREAgent(SOCKET_PATH, server, logger, tpm)
     agent.start()
+
+    # Admin web UI (localhost-only, disabled via SPIRE_NHP_WEB_ENABLED=false)
+    web_ui = None
+    if WEB_UI_ENABLED:
+        web_ui = AdminWebUI(server, logger, tpm)
+        url = web_ui.start()
+        logger.info("main", f"Admin web UI: {url}", event_type="web_ui_start")
+        print(f"[NHP] Admin UI       : {url}")
+
     logger.info("main", "=== SPIRE NHP Daemon Ready ===", event_type="ready")
 
     time.sleep(0.5)
@@ -110,6 +120,8 @@ def main():
     # Keep running until interrupted
     def _shutdown(sig, frame):
         print("\n[NHP] Shutting down...")
+        if web_ui:
+            web_ui.stop()
         agent.stop()
         deinit_hw()
         logger.info(

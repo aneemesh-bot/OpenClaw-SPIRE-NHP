@@ -37,6 +37,12 @@ TROPIC01_ROOT_CA_SLOT: int = 0
 # workloads without a signing-proxy endpoint).
 TROPIC01_SVID_SLOT_RANGE: tuple[int, int] = (1, 31)
 
+# ── Admin web UI ──────────────────────────────────────────────────────────
+# Set SPIRE_NHP_WEB_ENABLED=false to disable the local admin interface.
+WEB_UI_ENABLED: bool = os.environ.get("SPIRE_NHP_WEB_ENABLED", "true").lower() == "true"
+WEB_UI_HOST: str = os.environ.get("SPIRE_NHP_WEB_HOST", "127.0.0.1")
+WEB_UI_PORT: int = int(os.environ.get("SPIRE_NHP_WEB_PORT", "8080"))
+
 # Path to the compiled bridge shared library.
 _BRIDGE_DEFAULT = os.path.join(
     os.path.dirname(__file__),

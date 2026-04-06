@@ -55,6 +55,10 @@ nhp_daemon/
   spire_agent.py       SPIRE Agent (UDS listener, attestation, SVID delivery)
   workload_api.py      Client library for OpenClaw workloads
   sqlite_logger.py     Structured SQLite logger
+  web_ui.py            Admin web portal (stdlib http.server, zero external deps)
+  static/
+    index.html         Single-page dashboard
+    style.css          Dashboard styles
   main.py              Daemon startup and demo flow
 
 tropic01-req/
@@ -74,6 +78,58 @@ tests/
   test_spire_server.py  Server-level tests
   test_sqlite_logger.py Logger tests
   test_integration.py   Full Agent + Workload API flow over UDS
+```
+
+## Web Admin Portal
+
+The daemon ships a built-in read/write admin dashboard served over HTTP using only Python's standard library (`http.server`). No additional packages are required.
+
+### Endpoints
+
+| Method | Path | Description |
+| :--- | :--- | :--- |
+| `GET` | `/` | Dashboard HTML |
+| `GET` | `/style.css` | Dashboard CSS |
+| `GET` | `/api/status` | Daemon health snapshot (uptime, mode, trust domain) |
+| `GET` | `/api/svids` | Active SVIDs with SPIFFE ID, expiry, and TTL countdown |
+| `DELETE` | `/api/svids` | Manually revoke an SVID `{"spiffe_id": "..."}` |
+| `GET` | `/api/entries` | Registration entry list |
+| `POST` | `/api/entries` | Create a registration entry |
+| `DELETE` | `/api/entries` | Revoke a registration entry (also drops its cached SVID) |
+| `GET` | `/api/logs` | Structured logs (`?level=`, `&component=`, `&event_type=`, `&spiffe_id=`, `&since=`, `&limit=`, `&offset=`) |
+| `GET` | `/api/bundle` | Trust Bundle / root CA info |
+| `GET` | `/api/attestor` | Endorsement key hash and PCR measurements |
+
+### Accessing the Portal
+
+**Bare-metal / local:**
+
+The portal binds to `127.0.0.1:8080` by default. Open a browser at:
+
+```
+http://127.0.0.1:8080
+```
+
+**Docker:**
+
+The image sets `SPIRE_NHP_WEB_HOST=0.0.0.0` so the portal is reachable on the mapped host port:
+
+```bash
+docker compose up          # portal at http://localhost:8080
+```
+
+To change the port at runtime:
+
+```bash
+SPIRE_NHP_WEB_PORT=9090 python -m nhp_daemon
+# or
+docker run -e SPIRE_NHP_WEB_PORT=9090 -p 9090:9090 ...
+```
+
+To disable the portal entirely:
+
+```bash
+SPIRE_NHP_WEB_ENABLED=false python -m nhp_daemon
 ```
 
 ## Requirements
@@ -237,6 +293,8 @@ sqlite3 /tmp/spire-nhp/spire_nhp_log.db \
 docker compose up --build
 ```
 
+The admin portal is available at **http://localhost:8080** once the container is running.
+
 ### Build and Run (hardware mode)
 
 Plug in the TROPIC01 USB devkit, then:
@@ -286,6 +344,9 @@ All settings can be overridden via environment variables:
 | `TROPIC01_DEVICE` | (by-id symlink) | TROPIC01 device path |
 | `TROPIC01_PAIRING_KEYS` | `eng_sample` | Key set for pairing |
 | `TROPIC01_BRIDGE_SO` | (auto) | Path to `libtropic01_bridge.so` |
+| `SPIRE_NHP_WEB_ENABLED` | `true` | Set `false` to disable the admin web portal |
+| `SPIRE_NHP_WEB_HOST` | `127.0.0.1` | Bind address for the web portal (use `0.0.0.0` in Docker) |
+| `SPIRE_NHP_WEB_PORT` | `8080` | TCP port for the web portal |
 
 SVID TTL defaults to 300 seconds (5 minutes). The maximum is 900 seconds (15 minutes).
 

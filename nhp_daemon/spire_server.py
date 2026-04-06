@@ -140,6 +140,40 @@ class SPIREServer:
         )
         return True
 
+    def list_svids(self) -> list[dict]:
+        """Return a snapshot of all tracked SVIDs with expiry metadata."""
+        now = time.time()
+        with self._lock:
+            snapshot = {sid: expiry for sid, (_, expiry) in self._issued_svids.items()}
+        ttl_map = {e.spiffe_id: e.ttl for e in self.registration_store.list_entries()}
+        return [
+            {
+                "spiffe_id": sid,
+                "expires_at": expiry,
+                "remaining_s": max(0.0, round(expiry - now, 1)),
+                "ttl": ttl_map.get(sid, 300),
+                "expired": expiry < now,
+            }
+            for sid, expiry in snapshot.items()
+        ]
+
+    def revoke_svid(self, spiffe_id: str) -> bool:
+        """Drop a cached SVID without deleting its registration entry.
+
+        The workload will receive a fresh SVID on the next attestation cycle.
+        """
+        with self._lock:
+            if spiffe_id not in self._issued_svids:
+                return False
+            del self._issued_svids[spiffe_id]
+        self.logger.warning(
+            "spire-server",
+            f"SVID manually revoked by admin: {spiffe_id}",
+            spiffe_id=spiffe_id,
+            event_type="svid_revoked",
+        )
+        return True
+
     def is_svid_valid(self, spiffe_id: str) -> bool:
         """Check whether a previously issued SVID is still within TTL."""
         with self._lock:

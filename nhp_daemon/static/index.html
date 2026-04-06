@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SPIRE NHP Admin</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <span class="hdr-logo">&#9679; SPIRE NHP</span>
+  <span class="hdr-sep">|</span>
+  <span id="hdr-domain">—</span>
+  <span id="hdr-mode" class="badge badge-sw">Software</span>
+  <span id="hdr-err" hidden>API unreachable</span>
+  <span id="hdr-uptime">—</span>
+</header>
+
+<nav>
+  <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+  <button class="tab-btn" data-tab="svids">SVIDs</button>
+  <button class="tab-btn" data-tab="entries">Entries</button>
+  <button class="tab-btn" data-tab="logs">Audit Log</button>
+  <button class="tab-btn" data-tab="bundle">Trust Bundle</button>
+  <button class="tab-btn" data-tab="attestor">Attestor</button>
+</nav>
+
+<main>
+
+  <!-- ── Dashboard ── -->
+  <section id="tab-dashboard" class="tab-panel">
+    <div id="dash-cards" class="cards"></div>
+    <div class="denied-head">&#9888; Recent Access Denials</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Time</th><th>SPIFFE ID</th><th>Message</th><th>Selector mismatch</th></tr></thead>
+        <tbody id="dash-denied-tbody">
+          <tr><td colspan="4" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── SVIDs ── -->
+  <section id="tab-svids" class="tab-panel" hidden>
+    <div class="section-head">
+      <h2>Active SVIDs</h2>
+      <button class="btn btn-outline btn-sm" id="refresh-svids-btn">&#8635; Refresh</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>SPIFFE ID</th>
+            <th>Expires At</th>
+            <th>Original TTL</th>
+            <th class="col-remaining">Remaining</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="svids-tbody">
+          <tr><td colspan="5" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Entries ── -->
+  <section id="tab-entries" class="tab-panel" hidden>
+    <div class="section-head">
+      <h2>Registration Entries</h2>
+      <button class="btn btn-sm" id="create-entry-btn">+ New Entry</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Entry ID</th>
+            <th>SPIFFE ID</th>
+            <th>Parent ID</th>
+            <th>Selectors</th>
+            <th>TTL</th>
+            <th>Admin</th>
+            <th>Created</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="entries-tbody">
+          <tr><td colspan="8" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Audit Log ── -->
+  <section id="tab-logs" class="tab-panel" hidden>
+    <form id="log-filter-form" class="filter-bar">
+      <div class="ff">
+        <label>Level</label>
+        <select name="level">
+          <option value="">All</option>
+          <option value="DEBUG">DEBUG</option>
+          <option value="INFO">INFO</option>
+          <option value="WARNING">WARNING</option>
+          <option value="ERROR">ERROR</option>
+          <option value="CRITICAL">CRITICAL</option>
+        </select>
+      </div>
+      <div class="ff">
+        <label>Component</label>
+        <input type="text" name="component" placeholder="e.g. spire-server" class="filter-w-sm">
+      </div>
+      <div class="ff">
+        <label>Event Type</label>
+        <input type="text" name="event_type" placeholder="e.g. svid_denied" class="filter-w-sm">
+      </div>
+      <div class="ff">
+        <label>SPIFFE ID</label>
+        <input type="text" name="spiffe_id" placeholder="spiffe://…" class="filter-w-md">
+      </div>
+      <div class="ff">
+        <label>Since</label>
+        <select name="since">
+          <option value="0">All time</option>
+          <option value="5">Last 5 min</option>
+          <option value="60" selected>Last 1 hour</option>
+          <option value="1440">Last 24 hours</option>
+        </select>
+      </div>
+      <div class="ff">
+        <label>Limit</label>
+        <select name="limit">
+          <option value="50">50</option>
+          <option value="200" selected>200</option>
+          <option value="500">500</option>
+        </select>
+      </div>
+      <div class="ff ff-end">
+        <label>&nbsp;</label>
+        <button type="submit" class="btn btn-sm">Apply</button>
+      </div>
+      <div id="log-count"></div>
+    </form>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="col-nowrap">Time</th>
+            <th>Level</th>
+            <th>Component</th>
+            <th>Event</th>
+            <th>SPIFFE ID</th>
+            <th>Message</th>
+          </tr>
+        </thead>
+        <tbody id="logs-tbody">
+          <tr><td colspan="6" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Trust Bundle ── -->
+  <section id="tab-bundle" class="tab-panel" hidden>
+    <div class="subsection">
+      <h3>Bundle Info</h3>
+      <table class="info-table">
+        <tbody>
+          <tr><td>Trust Domain</td><td id="bundle-domain" class="mono">—</td></tr>
+          <tr><td>Sequence Number</td><td id="bundle-seq">—</td></tr>
+          <tr><td>Created At</td><td id="bundle-created">—</td></tr>
+          <tr><td>Refresh Interval</td><td id="bundle-refresh">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="subsection">
+      <div class="section-head section-head-tight">
+        <h3 class="h3-flush">Root CA Certificate</h3>
+        <button class="btn btn-outline btn-sm" id="copy-root-pem-btn">Copy PEM</button>
+      </div>
+      <pre id="bundle-pem" class="pem"></pre>
+    </div>
+    <div id="bundle-keys"></div>
+  </section>
+
+  <!-- ── Attestor ── -->
+  <section id="tab-attestor" class="tab-panel" hidden>
+    <div class="subsection">
+      <h3>Attestor Status</h3>
+      <table class="info-table">
+        <tbody>
+          <tr><td>Mode</td><td><span id="att-hw">—</span></td></tr>
+          <tr><td>Endorsement Key Hash</td><td id="att-ek-full" class="mono small">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="subsection">
+      <h3>PCR Measurements</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Register</th><th>SHA-256</th></tr></thead>
+          <tbody id="att-pcr-tbody">
+            <tr><td colspan="2" class="empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ── Create-Entry Dialog ── -->
+<dialog id="create-dialog">
+  <h3>New Registration Entry</h3>
+  <form id="entry-form" autocomplete="off">
+    <div class="form-row">
+      <label>SPIFFE ID</label>
+      <input type="text" name="spiffe_id" placeholder="spiffe://enterprise.com/nhp/…" required>
+    </div>
+    <div class="form-row">
+      <label>Parent ID</label>
+      <input type="text" name="parent_id" placeholder="spiffe://enterprise.com/spire/agent/…" required>
+    </div>
+    <div class="form-row">
+      <label>Selectors (type : value)</label>
+      <div id="selectors-container"></div>
+      <button type="button" class="btn btn-outline btn-xs" id="add-selector-btn">+ Add Selector</button>
+    </div>
+    <div class="form-row">
+      <label>TTL (seconds, max 900)</label>
+      <input type="number" name="ttl" value="300" min="1" max="900" class="input-w-ttl">
+    </div>
+    <div class="form-row form-row-inline">
+      <input type="checkbox" name="admin" id="admin-check">
+      <label for="admin-check" class="label-inline">Admin entry</label>
+    </div>
+    <div class="dialog-footer">
+      <button type="button" class="btn btn-outline" id="cancel-dialog-btn">Cancel</button>
+      <button type="submit" class="btn">Create Entry</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toasts"></div>
+
+<script>
+'use strict';
+
+// ── Utilities ────────────────────────────────────────────────────────────
+
+const $ = id => document.getElementById(id);
+
+function esc(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function fmtTime(ts) {
+  if (!ts) return '—';
+  return new Date(ts * 1000).toLocaleString(undefined, {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  });
+}
+
+function fmtDur(s) {
+  s = Math.round(s);
+  if (s < 0)    return 'expired';
+  if (s < 60)   return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+function truncate(s, n) {
+  s = String(s ?? '');
+  return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
+function toast(msg, type = 'ok') {
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  el.textContent = msg;
+  $('toasts').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+// ── API ───────────────────────────────────────────────────────────────────
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  const data = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+  if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { data });
+  return data;
+}
+
+// ── Tab management ────────────────────────────────────────────────────────
+
+let _intervals = {};
+
+function switchTab(name) {
+  Object.values(_intervals).forEach(clearInterval);
+  _intervals = {};
+
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === name);
+  });
+  document.querySelectorAll('.tab-panel').forEach(p => {
+    p.hidden = (p.id !== `tab-${name}`);
+  });
+
+  switch (name) {
+    case 'dashboard': loadDashboard(); _intervals.d = setInterval(loadDashboard, 15_000); break;
+    case 'svids':     loadSvids();     _intervals.s = setInterval(loadSvids, 10_000);     break;
+    case 'entries':   loadEntries();   break;
+    case 'logs':      loadLogs();      break;
+    case 'bundle':    loadBundle();    break;
+    case 'attestor':  loadAttestor();  break;
+  }
+}
+
+document.querySelectorAll('.tab-btn').forEach(b => {
+  b.addEventListener('click', () => switchTab(b.dataset.tab));
+});
+
+// ── Dashboard ─────────────────────────────────────────────────────────────
+
+async function loadDashboard() {
+  try {
+    const d = await api('/api/status');
+
+    $('hdr-domain').textContent = d.trust_domain;
+    $('hdr-mode').textContent   = d.hw_mode;
+    $('hdr-mode').className     = `badge ${d.hw_enabled ? 'badge-hw' : 'badge-sw'}`;
+    $('hdr-uptime').textContent = `uptime ${fmtDur(d.uptime_s)}`;
+    $('hdr-err').hidden = true;
+
+    const caWarn  = d.ca_expires_in_s < 86_400;
+    const errWarn = d.recent_warning_count > 0;
+
+    $('dash-cards').innerHTML = [
+      { v: d.active_svid_count,     l: 'Active SVIDs',       cls: '' },
+      { v: d.entry_count,           l: 'Registered Entries', cls: '' },
+      { v: fmtDur(d.ca_expires_in_s), l: 'CA Expires In',   cls: caWarn  ? 'warn' : '' },
+      { v: d.recent_warning_count,  l: 'Warnings (1 h)',     cls: errWarn ? 'warn' : '' },
+    ].map(c => `
+      <div class="card${c.cls ? ' ' + c.cls : ''}">
+        <div class="card-value">${esc(String(c.v))}</div>
+        <div class="card-label">${c.l}</div>
+      </div>
+    `).join('');
+
+    // Access denials feed
+    const denied = await api('/api/logs?event_type=svid_denied&limit=10&since=0');
+    const tb = $('dash-denied-tbody');
+    if (!denied.logs.length) {
+      tb.innerHTML = '<tr><td colspan="4" class="empty">No access denials recorded</td></tr>';
+    } else {
+      tb.innerHTML = denied.logs.map(l => `
+        <tr class="row-denied">
+          <td class="mono small">${fmtTime(l.timestamp)}</td>
+          <td class="mono small">${esc(l.spiffe_id || '—')}</td>
+          <td>${esc(l.message)}</td>
+          <td>${l.metadata
+            ? `<details><summary>selectors</summary><pre>${esc(JSON.stringify(l.metadata, null, 2))}</pre></details>`
+            : '—'}</td>
+        </tr>
+      `).join('');
+    }
+  } catch (_) {
+    $('hdr-err').hidden = false;
+  }
+}
+
+// ── SVIDs ─────────────────────────────────────────────────────────────────
+
+async function loadSvids() {
+  const d = await api('/api/svids').catch(() => ({ svids: [] }));
+  const tb = $('svids-tbody');
+  if (!d.svids.length) {
+    tb.innerHTML = '<tr><td colspan="5" class="empty">No active SVIDs</td></tr>';
+    return;
+  }
+  tb.innerHTML = d.svids.map(s => {
+    const pct = s.ttl > 0 ? Math.min(100, (s.remaining_s / s.ttl) * 100) : 0;
+    const bc  = pct > 66 ? 'bar-ok' : pct > 33 ? 'bar-warn' : 'bar-crit';
+    return `
+      <tr class="${s.expired ? 'row-expired' : ''}">
+        <td class="mono small">${esc(s.spiffe_id)}</td>
+        <td class="mono small">${fmtTime(s.expires_at)}</td>
+        <td>${s.ttl}s</td>
+        <td>
+          <div class="ttl-bar">
+            <div class="ttl-fill ${bc}" style="width:${pct.toFixed(1)}%"></div>
+            <span class="ttl-label">${s.expired ? 'expired' : fmtDur(s.remaining_s)}</span>
+          </div>
+        </td>
+        <td>
+          <button class="btn btn-danger btn-sm btn-revoke-svid"
+                  data-id="${esc(s.spiffe_id)}">Revoke</button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+$('svids-tbody').addEventListener('click', async e => {
+  const btn = e.target.closest('.btn-revoke-svid');
+  if (!btn) return;
+  const id = btn.dataset.id;
+  if (!confirm(`Revoke SVID for:\n${id}\n\nThe workload will receive a fresh SVID on the next attestation cycle.`)) return;
+  try {
+    await api('/api/svids', { method: 'DELETE', body: JSON.stringify({ spiffe_id: id }) });
+    toast('SVID revoked');
+    loadSvids();
+  } catch (err) {
+    toast(`Error: ${err.message}`, 'error');
+  }
+});
+
+$('refresh-svids-btn').addEventListener('click', loadSvids);
+
+// ── Entries ───────────────────────────────────────────────────────────────
+
+async function loadEntries() {
+  const d = await api('/api/entries').catch(() => ({ entries: [] }));
+  const tb = $('entries-tbody');
+  if (!d.entries.length) {
+    tb.innerHTML = '<tr><td colspan="8" class="empty">No registration entries</td></tr>';
+    return;
+  }
+  tb.innerHTML = d.entries.map(e => `
+    <tr>
+      <td class="mono small">${esc(e.entry_id)}</td>
+      <td class="mono small">${esc(e.spiffe_id)}</td>
+      <td class="mono small">${esc(e.parent_id)}</td>
+      <td>${e.selectors.map(s => `<span class="chip">${esc(s.type)}:${esc(s.value)}</span>`).join(' ')}</td>
+      <td>${e.ttl}s</td>
+      <td>${e.admin ? '<span class="badge badge-admin">admin</span>' : ''}</td>
+      <td class="small">${fmtTime(e.created_at)}</td>
+      <td>
+        <button class="btn btn-danger btn-sm btn-revoke-entry"
+                data-id="${esc(e.entry_id)}"
+                data-spiffe="${esc(e.spiffe_id)}">Delete</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+$('entries-tbody').addEventListener('click', async e => {
+  const btn = e.target.closest('.btn-revoke-entry');
+  if (!btn) return;
+  const { id, spiffe } = btn.dataset;
+  if (!confirm(`Delete registration entry?\n\nSPIFFE ID: ${spiffe}\n\nThis also revokes any active SVID for this identity.`)) return;
+  try {
+    await api('/api/entries', { method: 'DELETE', body: JSON.stringify({ entry_id: id }) });
+    toast('Entry deleted');
+    loadEntries();
+  } catch (err) {
+    toast(`Error: ${err.message}`, 'error');
+  }
+});
+
+// Entry creation dialog
+$('create-entry-btn').addEventListener('click',  () => $('create-dialog').showModal());
+$('cancel-dialog-btn').addEventListener('click', () => $('create-dialog').close());
+$('add-selector-btn').addEventListener('click', addSelectorRow);
+
+$('entry-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const form = e.target;
+  const selectors = [...form.querySelectorAll('.sel-row')].map(r => ({
+    type:  r.querySelector('.sel-type').value.trim(),
+    value: r.querySelector('.sel-val').value.trim(),
+  })).filter(s => s.type && s.value);
+
+  const body = {
+    spiffe_id: form.spiffe_id.value.trim(),
+    parent_id: form.parent_id.value.trim(),
+    selectors,
+    ttl:   parseInt(form.ttl.value, 10),
+    admin: form.admin.checked,
+  };
+  try {
+    const r = await api('/api/entries', { method: 'POST', body: JSON.stringify(body) });
+    toast(`Entry created: ${r.entry_id}`);
+    $('create-dialog').close();
+    form.reset();
+    resetSelectors();
+    loadEntries();
+  } catch (err) {
+    toast(`Error: ${err.message}`, 'error');
+  }
+});
+
+function addSelectorRow() {
+  const row = document.createElement('div');
+  row.className = 'sel-row';
+  row.innerHTML = `
+    <input class="sel-type" type="text" placeholder="type  (e.g. unix)" required>
+    <input class="sel-val"  type="text" placeholder="value (e.g. uid:1001)" required>
+    <button type="button" class="btn btn-danger btn-xs">×</button>
+  `;
+  row.querySelector('button').addEventListener('click', () => row.remove());
+  $('selectors-container').appendChild(row);
+}
+
+function resetSelectors() {
+  $('selectors-container').innerHTML = '';
+  addSelectorRow();
+}
+
+// ── Audit Log ─────────────────────────────────────────────────────────────
+
+async function loadLogs() {
+  const form   = $('log-filter-form');
+  const params = new URLSearchParams();
+
+  const level      = form.level.value;
+  const component  = form.component.value.trim();
+  const event_type = form.event_type.value.trim();
+  const spiffe_id  = form.spiffe_id.value.trim();
+  const sinceMin   = parseInt(form.since.value, 10);
+  const limit      = form.limit.value;
+
+  if (level)     params.set('level',      level);
+  if (component) params.set('component',  component);
+  if (event_type)params.set('event_type', event_type);
+  if (spiffe_id) params.set('spiffe_id',  spiffe_id);
+  if (sinceMin > 0) params.set('since', String(Date.now() / 1000 - sinceMin * 60));
+  params.set('limit', limit);
+
+  const d  = await api(`/api/logs?${params}`).catch(() => ({ logs: [], count: 0 }));
+  const tb = $('logs-tbody');
+  $('log-count').textContent = `${d.count} row${d.count !== 1 ? 's' : ''}`;
+
+  if (!d.logs.length) {
+    tb.innerHTML = '<tr><td colspan="6" class="empty">No log entries match the current filter</td></tr>';
+    return;
+  }
+  tb.innerHTML = d.logs.map(l => `
+    <tr class="log-row-${l.level.toLowerCase()}">
+      <td class="mono small col-nowrap">${fmtTime(l.timestamp)}</td>
+      <td><span class="badge badge-${l.level.toLowerCase()}">${l.level}</span></td>
+      <td>${esc(l.component)}</td>
+      <td class="small">${esc(l.event_type || '—')}</td>
+      <td class="mono small">${esc(truncate(l.spiffe_id || '—', 48))}</td>
+      <td>
+        ${esc(l.message)}
+        ${l.metadata
+          ? `<details><summary>metadata</summary><pre>${esc(JSON.stringify(l.metadata, null, 2))}</pre></details>`
+          : ''}
+      </td>
+    </tr>
+  `).join('');
+}
+
+$('log-filter-form').addEventListener('submit', e => { e.preventDefault(); loadLogs(); });
+
+// ── Trust Bundle ─────────────────────────────────────────────────────────
+
+async function loadBundle() {
+  const d = await api('/api/bundle').catch(() => null);
+  if (!d) return;
+  $('bundle-domain').textContent  = d.trust_domain;
+  $('bundle-seq').textContent     = d.sequence_number;
+  $('bundle-created').textContent = fmtTime(d.created_at);
+  $('bundle-refresh').textContent = `${d.refresh_interval}s`;
+  $('bundle-pem').textContent     = d.root_certificate_pem;
+
+  $('bundle-keys').innerHTML = d.signing_keys.map((k, i) => `
+    <div class="subsection">
+      <div class="section-head section-head-tight">
+        <h3 class="h3-flush">Signing Key ${i + 1}</h3>
+        <button class="btn btn-outline btn-sm copy-key-btn"
+                data-pem="${esc(k)}">Copy PEM</button>
+      </div>
+      <pre class="pem">${esc(k)}</pre>
+    </div>
+  `).join('');
+}
+
+$('copy-root-pem-btn').addEventListener('click', () => {
+  navigator.clipboard.writeText($('bundle-pem').textContent)
+    .then(() => toast('Root CA PEM copied'));
+});
+
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.copy-key-btn');
+  if (btn) navigator.clipboard.writeText(btn.dataset.pem)
+    .then(() => toast('Signing key PEM copied'));
+});
+
+// ── Attestor ──────────────────────────────────────────────────────────────
+
+async function loadAttestor() {
+  const d = await api('/api/attestor').catch(() => null);
+  if (!d) return;
+  $('att-hw').textContent = d.hw_backed ? 'TROPIC01 (hardware)' : 'Software (simulated)';
+  $('att-hw').className   = `badge ${d.hw_backed ? 'badge-hw' : 'badge-sw'}`;
+  $('att-ek-full').textContent = d.endorsement_key_hash;
+
+  const tb  = $('att-pcr-tbody');
+  const prs = Object.entries(d.pcrs || {});
+  if (!prs.length) {
+    tb.innerHTML = '<tr><td colspan="2" class="empty">No PCR measurements recorded yet</td></tr>';
+  } else {
+    tb.innerHTML = prs.map(([i, v]) =>
+      `<tr><td>PCR[${esc(i)}]</td><td class="mono small">${esc(v)}</td></tr>`
+    ).join('');
+  }
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+
+resetSelectors();
+switchTab('dashboard');
+</script>
+</body>
+</html>

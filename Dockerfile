@@ -31,4 +31,11 @@ ENV SPIRE_NHP_SOCKET=/var/run/spire-nhp/workload.sock
 ENV SPIRE_NHP_DB=/var/run/spire-nhp/spire_nhp.db
 ENV SPIRE_NHP_LOG_DB=/var/run/spire-nhp/spire_nhp_log.db
 
+# Web admin portal — bind to all interfaces inside the container.
+# Override SPIRE_NHP_WEB_HOST/PORT at runtime as needed.
+ENV SPIRE_NHP_WEB_HOST=0.0.0.0
+ENV SPIRE_NHP_WEB_PORT=8080
+
+EXPOSE 8080
+
 CMD ["python", "-m", "nhp_daemon"]

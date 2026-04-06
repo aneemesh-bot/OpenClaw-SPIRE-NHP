@@ -124,6 +124,55 @@ class SQLiteLogger:
         params.append(limit)
         return conn.execute(sql, params).fetchall()
 
+    def query_logs(
+        self,
+        level: LogLevel | None = None,
+        component: str | None = None,
+        event_type: str | None = None,
+        spiffe_id: str | None = None,
+        since: float | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Filtered log query returning a list of row dicts for the admin UI."""
+        conn = self._get_conn()
+        sql = (
+            "SELECT id, timestamp, level, component, message, "
+            "metadata, spiffe_id, event_type FROM logs WHERE 1=1"
+        )
+        params: list = []
+        if level is not None:
+            sql += " AND level = ?"
+            params.append(level.value)
+        if component:
+            sql += " AND component = ?"
+            params.append(component)
+        if event_type:
+            sql += " AND event_type = ?"
+            params.append(event_type)
+        if spiffe_id:
+            sql += " AND spiffe_id = ?"
+            params.append(spiffe_id)
+        if since:
+            sql += " AND timestamp >= ?"
+            params.append(since)
+        sql += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        rows = conn.execute(sql, params).fetchall()
+        return [
+            {
+                "id": r[0],
+                "timestamp": r[1],
+                "level": r[2],
+                "component": r[3],
+                "message": r[4],
+                "metadata": json.loads(r[5]) if r[5] else None,
+                "spiffe_id": r[6],
+                "event_type": r[7],
+            }
+            for r in rows
+        ]
+
     # ── lifecycle ──
 
     def close(self):
