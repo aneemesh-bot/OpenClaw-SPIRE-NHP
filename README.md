@@ -311,6 +311,48 @@ sqlite3 /tmp/spire-nhp/spire_nhp_log.db \
   "SELECT datetime(timestamp, 'unixepoch'), message, metadata FROM logs WHERE event_type = 'svid_minted'"
 ```
 
+## FAQ
+
+**Q: Can TROPIC01's 32 ECC slots be used to cycle through keys in a LIFO pattern, deleting the oldest key to make space for new ones?**
+
+The hardware supports it mechanically: `generate_ecc_key`, `read_ecc_pubkey`, and `erase_ecc_key` all accept a slot index in the range 0-31, so iterating over them is straightforward. It is not conducive to this SPIRE design for three reasons:
+
+- The Root CA key in slot 0 is the trust anchor for the entire Trust Bundle. Cycling it invalidates every issued SVID and requires re-distributing the bundle to all workloads. Root CA rotation is a deliberate, scheduled security event, not an operational pattern.
+- SVID private keys cannot use hardware slots at all. TROPIC01 never exports private key material, but workloads must receive their SVID private key in-memory to perform mTLS handshakes themselves. Using hardware slots for SVIDs would require a signing-proxy endpoint that the daemon does not have.
+- LIFO would erase the most recently generated key, which is likely the one currently in active use. FIFO (oldest out first) is the correct eviction order once a key's signed certificates have expired.
+
+The appropriate use of slots 1-31 is a FIFO-based intermediate CA key pool: the Root CA signs intermediate certificates, intermediates sign SVIDs, and the oldest intermediate slot is erased only after all SVIDs it signed have passed their TTL. This is a meaningful future addition but requires an intermediate CA layer not currently present.
+
+---
+
+**Q: Would it be better to erase and regenerate the Root CA key in slot 0 on every daemon restart?**
+
+No. The three main objections are:
+
+- **Flash wear.** TROPIC01 NVM has a finite erase/write cycle count. Erasing on every `kill`/restart prematurely damages the chip.
+- **Every crash becomes a full trust reset.** Erasing slot 0 invalidates every active SVID held by every running workload. With a 300-second TTL, workloads recover at the next rotation, but the disruption is caused by an operational event (restart) rather than a security event, which is unnecessary.
+- **It nullifies the benefit of hardware key storage.** The reason to use TROPIC01 for the Root CA is that the key persists, cannot be exported, and cannot be cloned. Erasing it on restart turns a hardware-protected long-lived anchor into a functional equivalent of an ephemeral software key.
+
+Root CA rotation should be triggered by a rotation policy, a suspected compromise, or an explicit operator command. The correct behavior on restart is to reuse the existing key if the slot is occupied and generate only when the slot is empty. For development and testing scenarios where a fresh key on each run is desirable, an opt-in flag is the right mechanism:
+
+```bash
+TROPIC01_FORCE_REGEN=true python -m nhp_daemon   # dev/test only
+```
+
+---
+
+## Changelog
+
+### 2026-04-06
+
+**Fix: TROPIC01 hardware mode fails on daemon restart (`Tropic01NotAvailable: tropic_bridge_ecc_key_generate failed (slot=0)`)**
+
+- **Root cause.** The daemon unconditionally called `generate_ecc_key(slot=0)` at startup. The TROPIC01 firmware rejects key generation into an already-occupied slot, and ECC keys persist in flash across reboots and power cycles. The first run succeeded; every subsequent run failed.
+- **Fix.** `CertificateAuthority.__init__` now attempts `read_ecc_pubkey(slot=0)` first. If the read succeeds the existing on-chip key is reused. `generate_ecc_key` is only called when the read raises `Tropic01NotAvailable`, indicating an empty slot.
+- **Files changed.** `nhp_daemon/ca.py`
+
+---
+
 ## License
 
 This is a research prototype. See the repository for license details.

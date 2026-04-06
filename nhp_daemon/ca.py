@@ -27,6 +27,7 @@ from cryptography.x509 import UniformResourceIdentifier
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 from . import config
+from .tropic01_hw import Tropic01NotAvailable
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -107,10 +108,15 @@ class CertificateAuthority:
         self._hw          = hw
 
         if hw is not None:
-            # Generate on-chip P-256 key and wrap it in a proxy
+            # Reuse the existing on-chip key if the slot is already
+            # occupied (keys persist in TROPIC01 flash across reboots).
+            # Only generate a new key when the slot is empty.
             slot = config.TROPIC01_ROOT_CA_SLOT
-            hw.generate_ecc_key(slot)
-            pub = hw.read_ecc_pubkey(slot)
+            try:
+                pub = hw.read_ecc_pubkey(slot)
+            except Tropic01NotAvailable:
+                hw.generate_ecc_key(slot)
+                pub = hw.read_ecc_pubkey(slot)
             self._private_key = Tropic01ECPrivateKey(hw, slot, pub)
         else:
             # Software fallback: RSA-2048
