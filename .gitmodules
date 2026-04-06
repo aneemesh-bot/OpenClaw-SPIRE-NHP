@@ -1,0 +1,3 @@
+[submodule "tropic01-req/libtropic"]
+	path = tropic01-req/libtropic
+	url = https://github.com/tropicsquare/libtropic.git
