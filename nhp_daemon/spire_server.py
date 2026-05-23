@@ -4,14 +4,20 @@ Manages the Root CA, Trust Bundle, Registration Entries, and SVID
 minting / revocation.  All state changes are logged to SQLite.
 """
 
+import concurrent.futures
+import json as _json
 import threading
 import time
+import urllib.error as _urllib_err
+import urllib.request as _urllib_req
 
 from cryptography.hazmat.primitives import serialization
 
+from . import config
 from .ca import CertificateAuthority
 from .registration import RegistrationEntry, RegistrationStore, Selector
 from .sqlite_logger import SQLiteLogger
+from .tropic01_hw import get_tropic01_serial
 from .trust_bundle import TrustBundle
 
 
@@ -21,11 +27,15 @@ class SPIREServer:
     def __init__(self, trust_domain: str, db_path: str, logger: SQLiteLogger, hw=None):
         self.trust_domain = trust_domain
         self.logger = logger
+        self._hw = hw
         self.ca = CertificateAuthority(trust_domain, hw=hw)
         self.registration_store = RegistrationStore(db_path)
         self.trust_bundle = self._create_trust_bundle()
         self._issued_svids: dict[str, tuple] = {}  # spiffe_id → (cert, expiry)
         self._lock = threading.Lock()
+        self._ledger_pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="nhp-ledger"
+        )
 
         mode = "hardware (TROPIC01)" if hw is not None else "software"
         logger.info(
@@ -110,6 +120,15 @@ class SPIREServer:
             event_type="svid_minted",
             metadata={"ttl": entry.ttl, "serial": str(cert.serial_number)},
         )
+
+        notarization_entry = {
+            "timestamp": int(time.time()),
+            "svid_serial": str(cert.serial_number),
+            "spiffe_id": spiffe_id,
+            "hardware_identity_binding": get_tropic01_serial(self._hw),
+        }
+        self._ledger_pool.submit(self._post_to_ledger, notarization_entry)
+
         return {
             "spiffe_id": spiffe_id,
             "certificate_pem": cert.public_bytes(serialization.Encoding.PEM).decode(),
@@ -122,6 +141,25 @@ class SPIREServer:
             "expires_at": expiry,
             "ttl": entry.ttl,
         }
+
+    def _post_to_ledger(self, entry: dict) -> None:
+        """Background worker: POST notarization entry to the immutable ledger.
+
+        Failures are silently swallowed — ledger latency must never stall SVID
+        delivery to the calling workload.
+        """
+        payload = _json.dumps(entry).encode()
+        req = _urllib_req.Request(
+            config.LEDGER_ENDPOINT,
+            data=payload,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with _urllib_req.urlopen(req, timeout=3):
+                pass
+        except Exception:
+            pass
 
     def revoke_entry(self, entry_id: str) -> bool:
         """Emergency revocation — delete registration and cached SVID."""

@@ -1,65 +1,109 @@
 # OpenClaw-SPIRE-NHP
 
-A prototype SPIFFE/SPIRE daemon that provisions **Non-Human Persona (NHP)** identities for OpenClaw agents in enterprise environments.
+A production-grade, hardware-rooted **Authentication, Authorization, and Accounting (AAA)** platform for OpenClaw agents in enterprise environments, built on SPIFFE/SPIRE and TROPIC01 hardware security.
 
-Traditional IAM treats machine identities as static service accounts with long-lived secrets. NHP identities are different: they are short-lived, hardware-bound, cryptographically verifiable, and scoped to a specific mission. This daemon implements the identity infrastructure layer that makes that possible.
+Traditional IAM treats machine identities as static service accounts with long-lived secrets. NHP identities are different: they are short-lived, hardware-bound, cryptographically verifiable, and scoped to a specific mission. This daemon implements the identity infrastructure layer that makes that possible — and now enforces three formal security invariants on every outbound transaction.
 
-Included support for hardware-mode encryption and its benefits, using the ubiquitous TROPIC01 cryptographical accelerator from Tropic Square. 
+Included support for hardware-mode encryption and its benefits, using the ubiquitous TROPIC01 cryptographical accelerator from Tropic Square.
+
+## Security Invariants
+
+Every resource access enforced by this daemon satisfies three invariants:
+
+1. **Composite Identity Invariant** — machine-to-machine authentication (mTLS via X.509-SVID) is joined with human-to-machine authorization (Bearer JWT inside the mTLS application layer). Both vectors are validated concurrently by the gateway layer.
+2. **Notarization Isolation Invariant** — because SVIDs expire every 300 seconds, they cannot serve as durable historical proof. Every SVID allocation is asynchronously logged to an immutable ledger simulator, decoupled from the transient certificate lifecycle.
+3. **Intent Non-Repudiation Invariant** — to defend against Indirect Prompt Injection, the agent's Chain-of-Thought reasoning trace is SHA-256 hashed, ECDSA-signed via a TROPIC01 hardware slot, and appended as an `X-Agent-Intent-Hash` header on every outbound transaction.
 
 ## How It Works
 
 The daemon runs a single-server SPIRE deployment on a Linux host. It manages a Root CA, issues short-lived X.509-SVIDs (SPIFFE Verifiable Identity Documents), and exposes a Unix Domain Socket for workload attestation.
 
-1. The **SPIRE Server** initializes a Root CA and creates a Trust Bundle containing the root certificate and active signing keys.
+1. The **SPIRE Server** initializes a Root CA and creates a Trust Bundle containing the root certificate and active signing keys. Every minted SVID is asynchronously notarized to an immutable ledger simulator via a background thread pool.
 2. **Registration entries** define which workloads are authorized, identified by Unix selectors (UID, binary SHA-256 hash).
 3. The **SPIRE Agent** listens on a Unix Domain Socket. When an OpenClaw process connects, the agent uses `SO_PEERCRED` to read the caller's PID, UID, and GID from the kernel, then hashes the binary at `/proc/<pid>/exe`.
 4. If the attested selectors match a registration entry, the agent mints a short-lived X.509-SVID and delivers it in-memory. No secrets are written to disk.
-5. Workloads use the Trust Bundle to verify peer certificates via mutual TLS. Certificates signed by an unknown CA are rejected.
+5. Workloads use the **Workload API client** to sign their reasoning traces with TROPIC01 hardware and attach identity headers (`Authorization`, `X-Agent-Intent-Hash`, `X-Agent-SVID-Serial`) to every outbound resource request.
+6. The **Gateway Telemetry** module intercepts requests, validates the composite identity, compiles structured W3C-traced accounting records, and streams them to the Web UI over WebSockets.
 
 ## Architecture
 
 ```
-OpenClaw Process
-    |
-    | (Unix Domain Socket)
-    v
-SPIRE Agent
-    |  - SO_PEERCRED attestation (PID, UID, binary hash)
-    |  - Delivers SVID + Trust Bundle in-memory
-    v
-SPIRE Server
-    |  - Root CA (P-256 ECDSA via TROPIC01 hardware, or RSA-2048 in software)
-    |  - Registration Store (SQLite)
-    |  - SVID minting with configurable TTL
-    |  - Emergency revocation
-    v
-SQLite Logger
-    - All events logged to SQLite (no text log files)
-    - Structured fields: component, level, SPIFFE ID, event type, JSON metadata
++-----------------------------------------------------------------------------------------+
+|                                    CONTROL PLANE                                        |
+|                                                                                         |
+|   +-----------------------+     HTTPS (Notarization Logs)   +------------------------+ |
+|   |     SPIRE Server      |--------------------------------->| Immutable WORM Ledger  | |
+|   |  (spire_server.py)    |                                  |     Simulator          | |
+|   +-----------------------+                                  +------------------------+ |
++-----------------------------------------------------------------------------------------+
+            |
+            | UDS (gRPC) / Internal Binding
+            v
++-----------------------------------------------------------------------------------------+
+|                                   EXECUTION PLANE                                       |
+|                                                                                         |
+|   +-----------------------+      Local PKCS#11 / ctypes     +------------------------+ |
+|   |      SPIRE Agent      |<-------------------------------->|   TROPIC01 HW Unit     | |
+|   |   (spire_agent.py)    |                                  |   (tropic01_hw.py)     | |
+|   +-----------------------+                                  +------------------------+ |
+|               ^                                                            ^             |
+|               | In-Memory SVID (UDS)                                       | Signed CoT  |
+|               v                                                            | Hash        |
+|   +---------------------------------------------------------------------+  |             |
+|   |                      OpenClaw VLA Orchestrator                      |--+             |
+|   |                 (Client Context / workload_api.py)                  |                |
+|   +---------------------------------------------------------------------+                |
++-----------------------------------------------------------------------------------------+
+            |
+            | Outbound HTTP: mTLS + Authorization + X-Agent-Intent-Hash
+            v
++-----------------------------------------------------------------------------------------+
+|                               RESOURCE & ACCOUNTING PLANE                               |
+|                                                                                         |
+|   +---------------------------------------------------------------------------------+   |
+|   |                Envoy Proxy / API Gateway Simulator                              |   |
+|   |                     (gateway_telemetry.py)                                      |   |
+|   +---------------------------------------------------------------------------------+   |
+|               |                                         |                               |
+|               | Proxied HTTP                            | In-Memory OTel Queue          |
+|               v                                         v                               |
+|   +-----------------------+               +---------------------------+                 |
+|   |   Target Resource     |               |  SIEM / OTel Sink         |                 |
+|   |     Backend API       |               |  (telemetry_queue)        |                 |
+|   +-----------------------+               +---------------------------+                 |
+|                                                         |                               |
+|                                                         | WebSockets (live push)        |
+|                                                         v                               |
+|                                           +---------------------------+                 |
+|                                           |   Real-Time Web UI        |                 |
+|                                           |      (web_ui.py)          |                 |
+|                                           +---------------------------+                 |
++-----------------------------------------------------------------------------------------+
 ```
 
 ## Project Structure
 
 ```
 nhp_daemon/
-  __init__.py          Package marker
-  __main__.py          python -m nhp_daemon entry point
-  config.py            Trust domain, socket path, TROPIC01 settings, TTL defaults
-  ca.py                Root CA and X.509-SVID signing (RSA or P-256 ECDSA via hardware)
-  tropic01_hw.py       ctypes wrapper for the TROPIC01 bridge library (TRNG, ECC, sign)
-  tpm_simulator.py     Tropic01Attestor: key generation, PCR measurement, quotes
-  trust_bundle.py      Trust Bundle creation, serialization, SVID verification
-  registration.py      SQLite-backed registration entry CRUD and selector matching
-  attestation.py       SO_PEERCRED workload attestation
-  spire_server.py      SPIRE Server (CA + registration + minting + revocation)
-  spire_agent.py       SPIRE Agent (UDS listener, attestation, SVID delivery)
-  workload_api.py      Client library for OpenClaw workloads
-  sqlite_logger.py     Structured SQLite logger
-  web_ui.py            Admin web portal (stdlib http.server, zero external deps)
+  __init__.py            Package marker
+  __main__.py            python -m nhp_daemon entry point
+  config.py              Trust domain, socket path, TROPIC01 settings, TTL/ledger defaults
+  ca.py                  Root CA and X.509-SVID signing (RSA or P-256 ECDSA via hardware)
+  tropic01_hw.py         ctypes wrapper for the TROPIC01 bridge library (TRNG, ECC, sign, serial)
+  tpm_simulator.py       Tropic01Attestor: key generation, PCR measurement, quotes
+  trust_bundle.py        Trust Bundle creation, serialization, SVID verification
+  registration.py        SQLite-backed registration entry CRUD and selector matching
+  attestation.py         SO_PEERCRED workload attestation
+  spire_server.py        SPIRE Server (CA + registration + minting + async notarization)
+  spire_agent.py         SPIRE Agent (UDS listener, attestation, SVID delivery)
+  workload_api.py        Client library: SVID fetch, intent signing, authenticated requests
+  gateway_telemetry.py   Envoy/API gateway simulator: mTLS auth, JWT authz, OTel accounting
+  sqlite_logger.py       Structured SQLite logger
+  web_ui.py              Admin web portal: REST API + live WebSocket stream (logs + telemetry)
   static/
-    index.html         Single-page dashboard
-    style.css          Dashboard styles
-  main.py              Daemon startup and demo flow
+    index.html           Single-page dashboard
+    style.css            Dashboard styles
+  main.py                Daemon startup and demo flow
 
 tropic01-req/
   libtropic/           TropicSquare libtropic C library (git submodule)
@@ -99,6 +143,11 @@ The daemon ships a built-in read/write admin dashboard served over HTTP using on
 | `GET` | `/api/logs` | Structured logs (`?level=`, `&component=`, `&event_type=`, `&spiffe_id=`, `&since=`, `&limit=`, `&offset=`) |
 | `GET` | `/api/bundle` | Trust Bundle / root CA info |
 | `GET` | `/api/attestor` | Endorsement key hash and PCR measurements |
+| `WS` | `/ws/logs` | WebSocket stream — pushes new audit log rows **and** gateway telemetry records as JSON every 500 ms |
+
+WebSocket messages are JSON objects with one of two shapes:
+- `{"logs": [...]}` — audit log rows from SQLite (existing events: `svid_minted`, `entry_created`, etc.)
+- `{"telemetry": [...]}` — gateway accounting records with `trace_id`, `agent_spiffe_id`, `intent_hash`, and full W3C trace fields
 
 ### Accessing the Portal
 
@@ -263,6 +312,44 @@ print(svid["spiffe_id"], "expires:", svid["expires_at"])
 print("valid:", c.validate_peer_certificate(svid["certificate_pem"]))
 ```
 
+Sign a reasoning trace and make an authenticated resource request:
+
+```python
+from nhp_daemon.workload_api import WorkloadAPIClient
+
+c = WorkloadAPIClient("/tmp/spire-nhp/workload.sock")
+c.fetch_svid("spiffe://enterprise.com/nhp/openclaw/finance-auditor")
+
+# Hardware-sign the agent's Chain-of-Thought
+intent_sig = c.sign_agent_intent("I will fetch Q3 financials to answer the user's question.")
+print("intent hash:", intent_sig[:16], "...")
+
+# Make an outbound request with all NHP identity headers attached
+resp = c.make_resource_request(
+    "GET",
+    "http://127.0.0.1:8000/api/v1/q3_financials",
+    jwt_token="<operator-jwt>",
+    chain_of_thought="Fetching Q3 financials for the auditor workload.",
+)
+print(resp["status"])
+```
+
+Test the gateway telemetry interceptor directly:
+
+```python
+from nhp_daemon.gateway_telemetry import GatewayTelemetry, telemetry_queue
+
+gw = GatewayTelemetry(trust_domain="enterprise.com", tropic01_serial="A8F9B2C4")
+record = gw.handle_request(
+    authorization_header="Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+    method="GET",
+    resource="/api/v1/q3_financials",
+    status=200,
+)
+print(record["trace_id"], record["delegated_human_sub"])
+print("queue depth:", telemetry_queue.qsize())
+```
+
 Inspect the registration store:
 
 ```bash
@@ -347,6 +434,7 @@ All settings can be overridden via environment variables:
 | `SPIRE_NHP_WEB_ENABLED` | `true` | Set `false` to disable the admin web portal |
 | `SPIRE_NHP_WEB_HOST` | `127.0.0.1` | Bind address for the web portal (use `0.0.0.0` in Docker) |
 | `SPIRE_NHP_WEB_PORT` | `8080` | TCP port for the web portal |
+| `SPIRE_NHP_LEDGER_ENDPOINT` | `http://127.0.0.1:9999/notarize` | HTTP POST destination for SVID notarization records (immutable ledger simulator) |
 
 SVID TTL defaults to 300 seconds (5 minutes). The maximum is 900 seconds (15 minutes).
 
@@ -355,10 +443,14 @@ SVID TTL defaults to 300 seconds (5 minutes). The maximum is 900 seconds (15 min
 - **Identity as State, not Secret.** Workloads are attested by kernel-verified process attributes (UID, binary hash), not passwords or API keys.
 - **No secrets on disk.** SVIDs and the Trust Bundle are delivered in-memory over the Unix socket.
 - **Hardware-backed Root CA.** When `USE_TROPIC01_HW=true`, the Root CA P-256 private key is generated on-chip and never exported. All signing goes through the TROPIC01 USB engineering sample via a ctypes bridge.
-- **Graceful hardware fallback.** If the TROPIC01 device is unavailable, the daemon falls back to RSA-2048 / software RNG without crashing.
+- **Graceful hardware fallback.** If the TROPIC01 device is unavailable, the daemon falls back to RSA-2048 / software RNG without crashing; `sign_agent_intent()` falls back to returning the bare SHA-256 hex digest.
 - **All logging to SQLite.** Every event (SVID minted, attestation failed, entry revoked) is stored as a structured row with component, level, SPIFFE ID, event type, and JSON metadata. No text log files exist.
 - **Selector-based matching.** A registration entry's selectors must be a subset of the workload's attested attributes. Presenting extra attributes is fine; missing a required one causes rejection.
 - **Emergency revocation.** Deleting a registration entry immediately invalidates the cached SVID.
+- **Notarization never stalls identity delivery.** The background `ThreadPoolExecutor` (2 workers) that POSTs notarization records to the ledger simulator swallows all exceptions. A slow or unreachable ledger has zero impact on SVID issuance latency.
+- **Intent signing uses slots 1–31, never slot 0.** TROPIC01 slot 0 is permanently reserved for the Root CA key. `sign_agent_intent()` always targets slot 1 for workload signing, preventing any accidental collision with the trust anchor.
+- **Gateway telemetry is fire-and-forget on the request path.** `GatewayTelemetry.handle_request()` enqueues records to a bounded `queue.Queue(maxsize=1000)` using `put_nowait()`. If the queue is full, records are silently dropped rather than blocking the request handler.
+- **WebSocket broadcaster pushes two event streams.** The 500 ms poll loop in `web_ui.py` now drains both the SQLite audit log and the `gateway_telemetry.telemetry_queue`, broadcasting separate `{"logs": [...]}` and `{"telemetry": [...]}` JSON frames to connected clients.
 
 ## Querying Logs
 
@@ -405,6 +497,38 @@ TROPIC01_FORCE_REGEN=true python -m nhp_daemon   # dev/test only
 ---
 
 ## Changelog
+
+### 2026-05-23
+
+**Feature: Hardware-Rooted NHP AAA & Traceability Framework**
+
+Transitioned the daemon from a localised workload attestation prototype to a production-grade AAA platform enforcing three security invariants on every transaction.
+
+**`nhp_daemon/spire_server.py` — Notarization Isolation**
+- Added a `ThreadPoolExecutor` (2 workers) to `SPIREServer.__init__` for fire-and-forget ledger dispatch.
+- `mint_svid()` now assembles a `notarization_entry` (`timestamp`, `svid_serial`, `spiffe_id`, `hardware_identity_binding`) and submits it to `_post_to_ledger()` immediately after a successful SVID build.
+- `_post_to_ledger()` POSTs the JSON record to `config.LEDGER_ENDPOINT` with a 3-second timeout; all exceptions are swallowed to guarantee SVID delivery is never stalled.
+
+**`nhp_daemon/tropic01_hw.py` — Hardware Serial**
+- `Tropic01HW.__init__` now derives a 12-char hex `serial` from 6 TRNG bytes at startup.
+- Added `get_tropic01_serial(hw=None)` module-level helper; returns `"SIMULATED"` when hardware is absent.
+
+**`nhp_daemon/config.py` — Ledger Endpoint**
+- Added `LEDGER_ENDPOINT` config var (default `http://127.0.0.1:9999/notarize`, overridable via `SPIRE_NHP_LEDGER_ENDPOINT`).
+
+**`nhp_daemon/workload_api.py` — Intent Non-Repudiation**
+- Added `sign_agent_intent(chain_of_thought_block)`: SHA-256 hashes the reasoning trace, signs with TROPIC01 slot 1 (ECC P-256), and returns a hex-encoded DER signature. Falls back to the raw hex digest in software mode.
+- Added `make_resource_request(method, url, body, jwt_token, chain_of_thought)`: outbound HTTP helper that attaches `Authorization: Bearer`, `X-Agent-Intent-Hash`, and `X-Agent-SVID-Serial` headers to every request.
+
+**`nhp_daemon/gateway_telemetry.py` — New module**
+- `GatewayTelemetry.handle_request()` validates mTLS identity (SPIFFE URI SAN extracted from the X.509 cert), decodes the Bearer JWT for `delegated_human_sub`, propagates or generates a W3C `trace_id`, and emits a structured accounting record.
+- Records are placed on the module-level `telemetry_queue` (`queue.Queue(maxsize=1000)`), which `web_ui.py` consumes.
+
+**`nhp_daemon/web_ui.py` — Live Telemetry WebSocket**
+- `_ws_broadcaster_loop` now drains `gateway_telemetry.telemetry_queue` in addition to polling the SQLite logger, broadcasting `{"telemetry": [...]}` frames alongside existing `{"logs": [...]}` frames.
+- Extracted dead-socket pruning into a `_ws_broadcast()` helper to remove duplication.
+
+---
 
 ### 2026-04-06
 

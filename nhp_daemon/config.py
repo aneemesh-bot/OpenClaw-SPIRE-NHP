@@ -37,6 +37,12 @@ TROPIC01_ROOT_CA_SLOT: int = 0
 # workloads without a signing-proxy endpoint).
 TROPIC01_SVID_SLOT_RANGE: tuple[int, int] = (1, 31)
 
+# ── Immutable ledger simulator ────────────────────────────────────────────
+# Set SPIRE_NHP_LEDGER_ENDPOINT to point at a real WORM ledger POST receiver.
+LEDGER_ENDPOINT: str = os.environ.get(
+    "SPIRE_NHP_LEDGER_ENDPOINT", "http://127.0.0.1:9999/notarize"
+)
+
 # ── Admin web UI ──────────────────────────────────────────────────────────
 # Set SPIRE_NHP_WEB_ENABLED=false to disable the local admin interface.
 WEB_UI_ENABLED: bool = os.environ.get("SPIRE_NHP_WEB_ENABLED", "true").lower() == "true"

@@ -26,6 +26,7 @@ import base64
 import hashlib
 import json
 import os
+import queue
 import struct
 import time
 import threading
@@ -33,6 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 from . import config
+from . import gateway_telemetry as _gw
 from .sqlite_logger import LogLevel
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -322,29 +324,43 @@ class AdminWebUI:
         if self._http_server:
             self._http_server.shutdown()
     def _ws_broadcaster_loop(self):
-        """Poll the logger every 500 ms and push new rows to all WebSocket clients."""
+        """Poll logger and gateway telemetry queue every 500 ms; push to WebSocket clients."""
         while True:
             time.sleep(0.5)
+
+            # ── audit log rows ──
             try:
                 rows = self._logger.query_logs(since=self._ws_last_ts, limit=50)
             except Exception:
-                continue
-            if not rows:
-                continue
-            self._ws_last_ts = max(r["timestamp"] for r in rows) + 0.001
-            payload = json.dumps({"logs": rows}, default=str)
-            with self._ws_lock:
-                if not self._ws_clients:
-                    continue
-                dead = []
-                for sock in list(self._ws_clients):
-                    if not _ws_send_text(sock, payload):
-                        dead.append(sock)
-                for s in dead:
-                    try:
-                        self._ws_clients.remove(s)
-                    except ValueError:
-                        pass
+                rows = []
+            if rows:
+                self._ws_last_ts = max(r["timestamp"] for r in rows) + 0.001
+                self._ws_broadcast(json.dumps({"logs": rows}, default=str))
+
+            # ── gateway telemetry records ──
+            tele_records = []
+            while True:
+                try:
+                    tele_records.append(_gw.telemetry_queue.get_nowait())
+                except queue.Empty:
+                    break
+            if tele_records:
+                self._ws_broadcast(json.dumps({"telemetry": tele_records}, default=str))
+
+    def _ws_broadcast(self, payload: str) -> None:
+        """Send *payload* to all connected WebSocket clients, pruning dead sockets."""
+        with self._ws_lock:
+            if not self._ws_clients:
+                return
+            dead = []
+            for sock in list(self._ws_clients):
+                if not _ws_send_text(sock, payload):
+                    dead.append(sock)
+            for s in dead:
+                try:
+                    self._ws_clients.remove(s)
+                except ValueError:
+                    pass
     # ── API data providers ────────────────────────────────────────────────
 
     def _api_status(self) -> dict:

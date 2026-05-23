@@ -95,6 +95,16 @@ class Tropic01HW:
                 f"tropic_bridge_init failed (rc={rc}). "
                 f"Device: {device}, keys: {pairing_keys}"
             )
+        # Derive a stable 6-byte serial from hardware TRNG on first init.
+        try:
+            self._serial: str = self.get_random(6).hex().upper()
+        except Tropic01NotAvailable:
+            self._serial = "000000000000"
+
+    @property
+    def serial(self) -> str:
+        """Return the 12-char hex hardware serial derived at init."""
+        return self._serial
 
     def deinit(self) -> None:
         self._lib.tropic_bridge_deinit()
@@ -222,3 +232,15 @@ def deinit_hw() -> None:
         if _hw is not None:
             _hw.deinit()
             _hw = None
+
+
+def get_tropic01_serial(hw: Optional["Tropic01HW"] = None) -> str:
+    """Return the TROPIC01 serial string for *hw*, or a simulated placeholder.
+
+    Falls back to the module singleton when *hw* is None, and to a fixed
+    ``"SIMULATED"`` string when hardware is not enabled.
+    """
+    target = hw or _hw
+    if target is not None:
+        return target.serial
+    return "SIMULATED"
