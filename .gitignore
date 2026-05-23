@@ -35,3 +35,6 @@ tropic01-req/libtropic_bridge/build/
 
 # Runtime data directories
 /tmp/spire-nhp/
+
+# other
+*PLAN.md
